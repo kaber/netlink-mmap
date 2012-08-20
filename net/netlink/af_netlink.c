@@ -166,6 +166,20 @@ static void netlink_consume_callback(struct netlink_callback *cb)
 	kfree(cb);
 }
 
+static void netlink_skb_destructor(struct sk_buff *skb)
+{
+	sock_rfree(skb);
+}
+
+static void netlink_skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
+{
+	WARN_ON(skb->sk != NULL);
+	skb->sk = sk;
+	skb->destructor = netlink_skb_destructor;
+	atomic_add(skb->truesize, &sk->sk_rmem_alloc);
+	sk_mem_charge(sk, skb->truesize);
+}
+
 static void netlink_sock_destruct(struct sock *sk)
 {
 	struct netlink_sock *nlk = nlk_sk(sk);
@@ -855,7 +869,7 @@ int netlink_attachskb(struct sock *sk, struct sk_buff *skb,
 		}
 		return 1;
 	}
-	skb_set_owner_r(skb, sk);
+	netlink_skb_set_owner_r(skb, sk);
 	return 0;
 }
 
@@ -924,7 +938,7 @@ static int netlink_unicast_kernel(struct sock *sk, struct sk_buff *skb)
 	ret = -ECONNREFUSED;
 	if (nlk->netlink_rcv != NULL) {
 		ret = skb->len;
-		skb_set_owner_r(skb, sk);
+		netlink_skb_set_owner_r(skb, sk);
 		nlk->netlink_rcv(skb);
 		consume_skb(skb);
 	} else {
